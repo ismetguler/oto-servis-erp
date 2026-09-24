@@ -2,7 +2,7 @@
 
 **Oto servis işletmeleri için web tabanlı ERP.** Araç kabulünden faturaya, stoktan cari hesaba kadar bir servisin günlük işini tek ekranda toplar.
 
-Kayseri'de faaliyet gösteren bir oto servis işletmesi için sıfırdan geliştirildi, Eylül 2026'dan beri **işletmede her gün aktif olarak kullanılıyor.** İşletmenin eski Access tabanlı masaüstü programının yerini aldı.
+Ankara'da faaliyet gösteren bir oto servis işletmesi için sıfırdan geliştirildi, Eylül 2026'dan beri **işletmede her gün aktif olarak kullanılıyor.** İşletmenin eski Access tabanlı masaüstü programının yerini aldı.
 
 > 🇬🇧 **In English:** A full-stack ERP for auto repair shops (vehicle intake, work orders, inventory, accounts receivable/payable, invoicing, 30+ reports). Built from scratch for a real client in ~3 weeks and in daily production use since September 2026, replacing a legacy MS Access system. Stack: Next.js 16 · React 19 · TypeScript · Prisma · PostgreSQL · Auth.js · Vercel.
 
