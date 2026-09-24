@@ -38,12 +38,14 @@ Kayseri'de faaliyet gösteren bir oto servis işletmesi için sıfırdan gelişt
 
 | | |
 |---|---|
-| ![Araç kabul formu](docs/ekran/02-arac-kabul-formu.png) | ![Kabul kartı](docs/ekran/03-kabul-karti.png) |
-| Araç kabul formu | Kabul kartı |
-| ![Açık onarımlar](docs/ekran/04-acik-onarimlar.png) | ![Araç nerede](docs/ekran/05-arac-nerede.png) |
-| Açık onarımlar | Araç nerede? |
-| ![Cari listesi](docs/ekran/07-cari-listesi.png) | ![Garanti ve sigorta](docs/ekran/09-garanti-sigorta-takibi.png) |
-| Cari listesi | Garanti ve sigorta takibi |
+| ![Açık onarımlar](docs/ekran/02-acik-onarimlar.png) | ![Kabul kartı](docs/ekran/03-kabul-karti.png) |
+| Açık onarımlar | Kabul kartı ve kalemler |
+| ![Ekspertiz](docs/ekran/08-ekspertiz.png) | ![Garanti ve sigorta](docs/ekran/09-arac-takip.png) |
+| Ekspertiz: boya / değişen şeması | Garanti ve sigorta takibi |
+| ![Araç kabul formu](docs/ekran/04-kabul-formu.png) | ![Araç kartı](docs/ekran/05-arac-karti.png) |
+| Araç kabul formu | Araç kartı |
+| ![Cari listesi](docs/ekran/06-cari-listesi.png) | ![Stok](docs/ekran/07-stok.png) |
+| Cari listesi | Stok listesi |
 
 *Ekran görüntülerinde yalnızca örnek (demo) veri vardır.*
 

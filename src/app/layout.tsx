@@ -48,10 +48,12 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="tr" suppressHydrationWarning>
-      <body
-        className={`${plexSans.variable} ${plexMono.variable} antialiased`}
-      >
+    <html
+      lang="tr"
+      className={`${plexSans.variable} ${plexMono.variable}`}
+      suppressHydrationWarning
+    >
+      <body className="antialiased">
         {children}
         <Toaster position="top-right" richColors closeButton />
       </body>
