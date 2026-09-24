@@ -6,7 +6,7 @@ import { metniSayiyaCevir } from "@/lib/sayi"
 /**
  * EKSPERTİZ (ÖN TAHMİN) — doğrulama kuralları
  *
- * Alanlar işletmenin matbu "EKSPER SURETİ" formundan birebir alındı:
+ * Alanlar Uğur Otomotiv'in matbu "EKSPER SURETİ" formundan birebir alındı:
  * üst blok (dosya/poliçe/eksper bilgileri), donanım VAR/YOK çeklisti, parça
  * tablosu ve alttaki 10 satırlık işçilik kırılımı.
  *
