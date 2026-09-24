@@ -9,7 +9,7 @@
  *
  * Fiyat bilgisi kaynakta yok (fiyatlar `Servis` tablosunda işlem bazlıydı,
  * kalıcı bir liste fiyatı hiç tutulmamış) — bu yüzden hepsi 0 TL ile aktarılır,
- * Uğur Oto ilk kullanımda güncel fiyatları kendisi girecek.
+ * İşletme ilk kullanımda güncel fiyatları kendisi girecek.
  *
  * Çalıştırma:
  *   npx tsx prisma/ice-aktar-iscilik-stok.ts --dry-run   (sadece sınıflandırmayı yazdırır, DB'ye dokunmaz)
