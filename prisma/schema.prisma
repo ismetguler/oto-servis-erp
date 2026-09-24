@@ -1,0 +1,1938 @@
+// ============================================================================
+//  GÜNDÜZ OTO — Oto Servis Yönetim Sistemi
+//  Veritabanı şeması (PostgreSQL)
+//
+//  KAPSAM: TEK İŞLETME.
+//  Selim Abi ile netleşti (24 Ağu 2026): "Selpar Bulut'un sadece 1 işletmeye ait
+//  halinin lokal sitede olan bir şeklini yapacağız" -> "Evet doğru anladın".
+//  Bu yüzden çok firmalı (multi-tenant) yapı, şube ve abonelik YOKTUR.
+//  `Firma` tablosu tek satırdır: fatura/rapor başlığı ve firma ayarları.
+//
+//  Tasarım kuralları:
+//   1. Hiçbir kayıt fiziksel silinmez. `silindi` alanı işaretlenir
+//      (Selpar'daki "Silinen Kabuller / Silinen Stoklar" listeleri bu sayede olur).
+//   2. Her ana tabloda kim oluşturdu / kim güncelledi bilgisi tutulur,
+//      ayrıca tüm işlemler `IslemLog` tablosuna yazılır.
+//   3. Para alanları Decimal(18,2), birim fiyatlar Decimal(18,4),
+//      miktarlar Decimal(18,3). Float ASLA kullanılmaz (kuruş kaybı olur).
+// ============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================================
+//  ENUM'LAR
+// ============================================================================
+
+/// Kullanıcı rolleri. Yetki kontrolü önce rol, sonra sayfa bazlı yapılır.
+enum Rol {
+  YONETICI // her şeye erişir, kullanıcı açar
+  MUHASEBE // cari, fatura, tahsilat, raporlar
+  SERVIS_DANISMANI // araç kabul, onarım, müşteri
+  USTA // sadece kendine atanan işler
+  DEPO // stok giriş/çıkış
+}
+
+enum CariTur {
+  MUSTERI
+  TEDARIKCI
+  PERSONEL
+  DIGER
+}
+
+enum CariTip {
+  SAHIS
+  SIRKET
+}
+
+/// Bakiyenin yönü. BORC = karşı taraf bize borçlu.
+enum BakiyeTur {
+  BORC
+  ALACAK
+}
+
+/// Araç kabul kartının (iş emri) yaşam döngüsü.
+enum KabulDurum {
+  ACIK // araç serviste, iş devam ediyor
+  BEKLEMEDE // parça/onay bekliyor
+  TAMAMLANDI // iş bitti, teslim bekliyor
+  TESLIM_EDILDI // kapalı onarım
+  IPTAL
+}
+
+/// Kabul kartına eklenen satırın türü.
+enum KalemTur {
+  PARCA
+  ISCILIK
+  DIS_HIZMET
+}
+
+enum EvrakTur {
+  SATIS
+  ALIS
+  SERVIS // araç kabulünden kesilen fatura
+  PERAKENDE
+  IADE_SATIS
+  IADE_ALIS
+}
+
+enum EvrakDurum {
+  TASLAK
+  KESILDI
+  IPTAL
+}
+
+enum SiparisTip {
+  ALINAN // müşteriden alınan sipariş (adım 9.5)
+  VERILEN // tedarikçiye verilen sipariş (adım 9.6)
+}
+
+enum SiparisDurum {
+  TASLAK
+  ONAYLANDI
+  KISMI_SEVK
+  TAMAMLANDI
+  IPTAL
+}
+
+enum TeklifDurum {
+  TASLAK
+  ONAYLANDI // müşteriye sunuldu, kart kilitlendi — kabule dönüştürülebilir
+  KABUL_EDILDI // dönüştürüldü (adım 9.8), sonrası kilitli/terminal
+  REDDEDILDI
+  IPTAL
+}
+
+enum StokHareketTur {
+  GIRIS
+  CIKIS
+  DEVIR
+  SAYIM
+  TRANSFER
+}
+
+enum SayimDurum {
+  TASLAK
+  ONAYLANDI
+  IPTAL
+}
+
+enum StokTransferDurum {
+  TASLAK
+  ONAYLANDI
+  IPTAL
+  GERI_ALINDI
+}
+
+enum StokGirisDurum {
+  TASLAK
+  ONAYLANDI
+  GERI_ALINDI
+}
+
+enum OdemeSekli {
+  NAKIT
+  KREDI_KARTI
+  HAVALE
+  CEK
+  SENET
+  MAHSUP
+}
+
+enum TahsilatTur {
+  TAHSILAT // para girişi
+  TEDIYE // para çıkışı (ödeme)
+}
+
+/// Cari ekstresine düşen hareketin kaynağı.
+enum CariHareketTur {
+  ACILIS
+  EVRAK
+  KABUL
+  TAHSILAT
+  TEDIYE
+  MAHSUP
+  CEK_SENET // alınan/verilen çek-senedin cariye yansıması
+}
+
+/// Küçük tanım/dropdown listeleri tek tabloda tutulur (`Tanim`).
+enum TanimTur {
+  ARAC_MARKA
+  ARAC_MODEL_UST
+  ARAC_MODEL
+  ARAC_RENK
+  ARAC_TURU
+  YAKIT_TURU
+  VITES_TURU
+  KASA_TIPI
+  ARAC_NEREDE
+  ISCILIK_BOLUMU
+  BOLGE
+  STOK_GRUP
+  URUN_GRUBU
+  URETICI
+  MASRAF
+  PROJE
+  ISTEK_TURU
+  BAKIM_SEKLI
+  KART_TURU
+  MUSTERI_SINIFI
+}
+
+/// Kasa kartı türü. Selpar'da kasa/banka/POS ayrımı tahsilat ekranında yapılıyor;
+/// biz kasayı kart hâline getirdiğimiz için tür kartın üzerinde duruyor.
+enum KasaTur {
+  NAKIT
+  BANKA
+  POS
+}
+
+/// Kasa defterine düşen satırın yönü. Tutar DAİMA pozitif tutulur, işaret bu
+/// alandan okunur — eksi tutar girilmesine izin vermek bakiyeyi sessizce bozardı.
+enum KasaHareketTur {
+  ACILIS
+  GIRIS
+  CIKIS
+  VIRMAN_GIRIS
+  VIRMAN_CIKIS
+}
+
+enum CekSenetTur {
+  CEK
+  SENET
+}
+
+/// ALINAN = müşteriden aldığımız (tahsilat tarafı),
+/// VERILEN = tedarikçiye verdiğimiz (ödeme tarafı).
+enum CekSenetYon {
+  ALINAN
+  VERILEN
+}
+
+/// Kâğıdın yaşam döngüsü. Geçişler sunucuda kilitli (cek-senet/actions.ts).
+enum CekSenetDurum {
+  PORTFOYDE // elimizde / karşı tarafta bekliyor
+  TAHSILDE // bankaya tahsile verildi
+  TAHSIL_EDILDI // parası kasaya girdi
+  ODENDI // verilen çek/senet ödendi, kasadan çıktı
+  KARSILIKSIZ
+  CIRO_EDILDI // başka bir cariye devredildi
+  IADE_EDILDI // sahibine geri verildi
+}
+
+/// Çek-senet "Onay İşlemleri" ekranı. Onaylanmayan kâğıt cariye ve kasaya
+/// İŞLENMEZ; böylece yanlış girilen kâğıt bakiyeyi bozmadan düzeltilebilir.
+enum OnayDurum {
+  BEKLIYOR
+  ONAYLANDI
+  REDDEDILDI
+}
+
+enum LogIslem {
+  GIRIS
+  GIRIS_BASARISIZ
+  CIKIS
+  EKLE
+  GUNCELLE
+  SIL
+  GERI_AL
+  YAZDIR
+  DISA_AKTAR
+}
+
+/// Otomatik numara üretilen evrak tipleri (KabulNo, FaturaNo ...).
+enum NumaratorTur {
+  KABUL
+  SATIS_FATURA
+  ALIS_FATURA
+  SERVIS_FATURA
+  PERAKENDE
+  TAHSILAT
+  TEDIYE
+  TEKLIF
+  SIPARIS
+  SIPARIS_VERILEN
+  CARI_KOD
+  STOK_KOD
+  ISCILIK_KOD
+  PAKET_KOD
+  KASA_KOD
+  CEK_SENET
+  SAYIM
+  TRANSFER
+  STOK_GIRIS
+  EKSPERTIZ
+}
+
+// ============================================================================
+//  1) FİRMA (tek kayıt) / KULLANICI
+// ============================================================================
+
+/// İşletmenin kendi bilgileri. Bu tabloda DAİMA tek satır bulunur (id = 1).
+/// Fatura başlığı, rapor üst bilgisi ve genel ayarlar buradan okunur.
+model Firma {
+  id        Int     @id @default(1)
+  unvan     String
+  vergiNo   String?
+  vergiDair String?
+  adres     String?
+  il        String?
+  ilce      String?
+  telefon   String?
+  gsm       String?
+  email     String?
+  webAdresi String?
+  logoUrl   String?
+  /// Yüklenen logo — tarayıcıda ~160px'e küçültülüp base64 data URI olarak
+  /// saklanır (dosya yükleme servisi yok, Vercel'de kalıcı disk yok). Sol
+  /// menü ve giriş ekranındaki marka işareti bunu kullanır; baskı şablonları
+  /// hâlâ `logoUrl` (dış link) alanından besleniyor.
+  logo      String?
+
+  /// Fatura altında gösterilecek banka/IBAN bilgisi (adım 11.8) — Cari'deki
+  /// banka alanlarıyla aynı isimlendirme, ayrı amaç: bu firmanın KENDİ hesabı.
+  bankaAdi String?
+  ibanNo   String?
+
+  /// Varsayılan KDV oranı ve para birimi — yeni kayıtlara ön değer olarak gelir.
+  varsayilanKdv Decimal @default(20) @db.Decimal(6, 2)
+  paraBirimi    String  @default("TRY")
+
+  olusturmaTarihi  DateTime @default(now())
+  guncellemeTarihi DateTime @updatedAt
+
+  @@map("firma")
+}
+
+/// Sisteme giriş yapan kişi. Giriş `kod` + `sifre` ile yapılır (Selpar ile aynı mantık).
+model Kullanici {
+  id        Int     @id @default(autoincrement())
+  kod       String  @unique // giriş kodu / kullanıcı adı
+  ad        String
+  soyad     String?
+  email     String?
+  telefon   String?
+  sifreHash String // bcrypt — düz şifre HİÇBİR yerde tutulmaz
+  rol       Rol     @default(SERVIS_DANISMANI)
+  aktif     Boolean @default(true)
+
+  /// Brute-force koruması: art arda hatalı giriş sayısı ve kilit bitişi.
+  hataliGirisSayisi Int       @default(0)
+  kilitBitis        DateTime?
+  sonGirisTarihi    DateTime?
+  sonGirisIp        String?
+
+  /// Şifre değiştirildiğinde eski oturumları geçersiz kılmak için.
+  sifreDegisimTarihi DateTime @default(now())
+
+  olusturmaTarihi  DateTime @default(now())
+  guncellemeTarihi DateTime @updatedAt
+  silindi          Boolean  @default(false)
+
+  yetkiler                 KullaniciYetki[]
+  loglar                   IslemLog[]
+  actigiKabuller           Kabul[]          @relation("KabulAcan")
+  ustaKabuller             Kabul[]          @relation("KabulUsta")
+  karaListeyeAldiklari     KaraListeKaydi[] @relation("KaraListeEkleyen")
+  karaListedenCikardiklari KaraListeKaydi[] @relation("KaraListeKaldiran")
+
+  @@index([aktif])
+  @@map("kullanicilar")
+}
+
+/// Rolün üstüne, kullanıcı bazlı sayfa yetkisi (Selpar'daki SayfaId mantığı).
+/// Kayıt yoksa rolün varsayılan yetkisi geçerlidir.
+model KullaniciYetki {
+  id          Int       @id @default(autoincrement())
+  kullaniciId Int
+  kullanici   Kullanici @relation(fields: [kullaniciId], references: [id], onDelete: Cascade)
+
+  /// Sayfa/modül kodu, örn: "cari.liste", "kabul.ekle"
+  sayfaKodu    String
+  gorebilir    Boolean @default(true)
+  ekleyebilir  Boolean @default(false)
+  duzeltebilir Boolean @default(false)
+  silebilir    Boolean @default(false)
+
+  @@unique([kullaniciId, sayfaKodu])
+  @@map("kullanici_yetkileri")
+}
+
+// ============================================================================
+//  2) TANIMLAR (dropdown kaynakları) + NUMARATÖR
+// ============================================================================
+
+/// Marka, model, renk, bölge, işçilik bölümü gibi küçük listeler.
+/// `ustId` ile hiyerarşi kurulur: Marka -> Model Üst -> Model.
+model Tanim {
+  id     Int      @id @default(autoincrement())
+  tur    TanimTur
+  kod    String?
+  ad     String
+  ustId  Int?
+  ust    Tanim?   @relation("TanimAgaci", fields: [ustId], references: [id])
+  altlar Tanim[]  @relation("TanimAgaci")
+  sira   Int      @default(0)
+  aktif  Boolean  @default(true)
+
+  olusturmaTarihi DateTime @default(now())
+
+  iscilikler Iscilik[] @relation("IscilikBolum")
+
+  @@unique([tur, ad, ustId])
+  @@index([tur, aktif])
+  @@map("tanimlar")
+}
+
+/// Evrak numarası üretimi. Her tür için son numara burada tutulur.
+model Numarator {
+  id    Int          @id @default(autoincrement())
+  tur   NumaratorTur
+  onEk  String       @default("") // örn: "KB-"
+  yil   Int? // yıl bazlı sıfırlama için
+  sonNo Int          @default(0)
+
+  @@unique([tur, yil])
+  @@map("numaratorler")
+}
+
+// ============================================================================
+//  3) CARİ (müşteri / tedarikçi / personel)
+// ============================================================================
+
+model Cari {
+  id    Int     @id @default(autoincrement())
+  kod   String  @unique // cari kodu
+  unvan String
+  turu  CariTur @default(MUSTERI)
+  tipi  CariTip @default(SAHIS)
+
+  // --- kimlik / vergi ---
+  vergiNo   String? // VKN veya TCKN
+  vergiDair String?
+
+  // --- iletişim ---
+  yetkili        String?
+  yetkiliTelefon String?
+  telefon        String?
+  gsm            String?
+  email          String?
+  adres          String?
+  il             String?
+  ilce           String?
+
+  // --- banka ---
+  banka      String?
+  bankaSube  String?
+  hesapNo    String?
+  ibanNo     String?
+  paraBirimi String  @default("TRY")
+
+  // --- ticari koşullar ---
+  hesapLimiti Decimal @default(0) @db.Decimal(18, 2)
+  riskLimiti  Decimal @default(0) @db.Decimal(18, 2)
+  vadeGun     Int     @default(0)
+
+  // --- sınıflandırma ---
+  ozelKod          String?
+  musteriSinifi    String?
+  /// Bu cariden sorumlu satış/servis personeli. Selpar'da plasiyer ayrı tablo
+  /// değil, cari tablosundaki `turu = PERSONEL` kaydı — biz de aynı yapıdayız.
+  /// İlişki tanımlı olmasının sebebi: liste/rapor ekranları plasiyer adını
+  /// ikinci bir sorgu atmadan okuyabilsin ve silinen bir personelin id'si
+  /// carilerde asılı kalamasın (FK kısıtı engelliyor).
+  plasiyerId       Int?
+  plasiyer         Cari?   @relation("CariPlasiyer", fields: [plasiyerId], references: [id])
+  plasiyerCarileri Cari[]  @relation("CariPlasiyer")
+  notu             String?
+
+  // --- personel alanları (yalnızca turu = PERSONEL kayıtlarda dolu) ---
+  /// Personel Selpar'da ayrı tablo değil, cari tablosunda `turu = PERSONEL`.
+  /// Bu yüzden personelin özlük alanları da burada duruyor; diğer türlerde
+  /// boş kalıyor. Ayrı tabloya taşımak, personelin cari hesabını (avans,
+  /// borç-alacak, ekstre) ikinci bir kart yapısına bölerdi.
+  gorevi           String?
+  iseGirisTarihi   DateTime?
+  istenCikisTarihi DateTime?
+  dogumTarihi      DateTime?
+  sgkNo            String?
+  maas             Decimal   @default(0) @db.Decimal(18, 2)
+  // --- bakiye (hareketlerden hesaplanır, hızlı okuma için burada tutulur) ---
+  acilisBakiye     Decimal   @default(0) @db.Decimal(18, 2)
+  acilisTuru       BakiyeTur @default(BORC)
+  bakiye           Decimal   @default(0) @db.Decimal(18, 2) // (+) borçlu, (-) alacaklı
+
+  /// Kara liste DURUMU burada duruyor (liste/uyarı ekranları tek alan okusun
+  /// diye), GEÇMİŞİ ise `KaraListeKaydi` tablosunda: kim, ne zaman, neden
+  /// koydu ve kim kaldırdı. Bu iki alan artık cari formundan değil, yalnızca
+  /// kara liste işlemleriyle değişir — aksi hâlde geçmişi olmayan bir durum
+  /// oluşabilirdi.
+  karaListe       Boolean @default(false)
+  karaListeNedeni String?
+  aktif           Boolean @default(true)
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  araclar            Arac[]
+  kabuller           Kabul[]
+  /// Garantisini üstlendiği kabuller (kart türü GARANTİ olan işler).
+  garantiKabulleri   Kabul[]          @relation("GarantiVeren")
+  kabulGorevleri     KabulPersonel[]  @relation("KabulPersoneli")
+  kalemGorevleri     KabulKalem[]     @relation("KalemPersoneli")
+  evraklar           Evrak[]
+  siparisler         Siparis[]
+  teklifler          Teklif[]
+  ekspertizler       Ekspertiz[]
+  tahsilatlar        Tahsilat[]
+  hareketler         CariHareket[]
+  cekSenetleri       CekSenet[]       @relation("CekSenetCarisi")
+  ciroCekleri        CekSenet[]       @relation("CekSenetCiroCarisi")
+  kasaHareketleri    KasaHareket[]
+  karaListeKayitlari KaraListeKaydi[]
+  filoSozlesmeleri   FiloSozlesmesi[]
+
+  @@index([unvan])
+  @@index([turu, silindi])
+  @@index([vergiNo])
+  @@index([plasiyerId])
+  @@map("cariler")
+}
+
+/**
+ * SA-3.3 — BASİT filo sözleşmesi. Selim abi: "yaşlı adam 3 kutu doldursun,
+ * bitsin" → PDF/dosya yükleme YOK, az alan.
+ * Sözleşme CARİYE bağlı (filo müşterisi = bir cari). Plakaya FK verilmedi:
+ * 50 araçlı filoda 50 satır doldurtmak sadelik çizgisine aykırı, ayrıca
+ * silinen araç bağı kırılganlık yaratırdı. Bunun yerine `kapsamPlakalari`
+ * serbest metin: boşsa carinin TÜM araçları, doluysa yalnız yazılan plakalar
+ * (normalize karşılaştırma — bkz. lib/plaka.ts `plakaSadelestir`).
+ * Kabul açılırken seçilen aracın carisinde bugünkü tarihte aktif (silinmemiş,
+ * aktif, başlangıç ≤ bugün ≤ bitiş) sözleşme varsa vade ÖNERİ olarak
+ * gösterilir — forma zorla yazılmaz.
+ */
+model FiloSozlesmesi {
+  id     Int  @id @default(autoincrement())
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+
+  ad              String
+  baslangic       DateTime
+  bitis           DateTime
+  vadeGun         Int      @default(0)
+  /// Boş = carinin tüm araçları. Dolu = virgül/satır ayraçlı plaka listesi.
+  kapsamPlakalari String?
+  aktif           Boolean  @default(true)
+  notu            String?
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  @@index([cariId])
+  @@map("filo_sozlesmeleri")
+}
+
+// ============================================================================
+//  4) ARAÇ
+// ============================================================================
+
+model Arac {
+  id     Int   @id @default(autoincrement())
+  cariId Int? // aracın sahibi (cari)
+  cari   Cari? @relation(fields: [cariId], references: [id])
+
+  plaka        String  @unique
+  saseNo       String?
+  aracTuru     String?
+  marka        String?
+  modelUst     String?
+  model        String?
+  modelYili    Int?
+  renk         String?
+  yakitTuru    String?
+  vitesTuru    String?
+  vitesSayisi  Int?
+  kasaTipi     String?
+  motorHacmi   String? // "1.6", "1.5 TDI" gibi serbest metin
+  sonKm        Int?
+  projesi      String?
+  aracVersiyon String?
+
+  // --- ruhsat ---
+  ruhsatTarihi DateTime?
+  ruhsatSeriNo String?
+  ruhsatQr     String? // QR ile okunan ruhsat verisi (Selpar: aracruhsatqr) — ham metin
+
+  // --- Selpar'daki dış sistem kodları (aracidsi/mokodu/pokodu) — parite için,
+  // gerçek entegrasyon yok, elle girilen/serbest referans alanları ---
+  aracIdSi           String?
+  moKodu             String?
+  poKodu             String?
+  motorCalismaSuresi String? // motor çalışma süresi sayaç okuması
+
+  // --- sigorta / garanti / muayene takibi (hatırlatma raporlarını besler) ---
+  trafikSigBaslama DateTime?
+  trafikSigBitis   DateTime?
+  kaskoBaslama     DateTime?
+  kaskoBitis       DateTime?
+  garantiBaslangic DateTime?
+  garantiBitis     DateTime?
+  muayeneBitis     DateTime?
+  akuBaslama       DateTime?
+  akuBitis         DateTime?
+  akuMarka         String?
+  lpgTankSonTarih  DateTime?
+  lpgTankMarka     String?
+
+  // --- periyodik bakım takibi ---
+  sonrakiBakimTarih  DateTime?
+  sonrakiBakimKm     Int?
+  trigerDegisimKm    Int?
+  trigerDegisimTarih DateTime?
+
+  notlar String?
+  aktif  Boolean @default(true)
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  kabuller     Kabul[]
+  ekspertizler Ekspertiz[]
+
+  @@index([saseNo])
+  @@index([cariId])
+  @@map("araclar")
+}
+
+// ============================================================================
+//  5) ARAÇ KABUL (İŞ EMRİ) — SİSTEMİN KALBİ
+// ============================================================================
+
+model Kabul {
+  id          Int        @id @default(autoincrement())
+  kabulNo     String     @unique // otomatik üretilir
+  kabulOzelNo String?
+  kartTuru    String? // normal / garanti / sigorta / iç iş
+  durum       KabulDurum @default(ACIK)
+
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+  aracId Int
+  arac   Arac @relation(fields: [aracId], references: [id])
+
+  // --- giriş ---
+  girisTarihi DateTime @default(now())
+  girisKm     Int?
+  yakitDurumu String?
+  sarjDurumu  String?
+
+  /// Selpar "tahminikm": aracin teslimde okunacagi tahmini km — periyodik
+  /// bakim hatirlatmasi bu deger uzerinden kurulur.
+  tahminiKm Int?
+
+  /// Selpar "evrakkdv": bu kart icin varsayilan KDV orani. Yeni kalem
+  /// eklenirken on deger olarak gelir (arac basi degisebiliyor: ihracat,
+  /// tevkifat, ic is emri gibi durumlar).
+  evrakKdvOrani Decimal @default(20) @db.Decimal(6, 2)
+
+  // --- teslim ---
+  tahminiTeslimTarihi DateTime?
+  teslimTarihi        DateTime?
+  teslimNotu          String?
+
+  // --- kişiler ---
+  getiren         String?
+  getirenGsm      String?
+  getirenTelefon  String?
+  teslimAlacak    String?
+  teslimAlacakGsm String?
+  yonlendiren     String?
+  formenId        Int? // atanan usta/formen (Kullanici)
+  formen          Kullanici? @relation("KabulUsta", fields: [formenId], references: [id])
+
+  // --- iş bilgisi ---
+  sikayet      String? // müşteri şikayeti
+  yapilanIsler String?
+  istekTuru    String?
+  bakimSekli   String?
+  aracNerede   String?
+  projesi      String?
+  filoSirketi  String?
+  ozelEsya     String? // araçta bırakılan özel eşya
+  aracNotlari  String?
+  cariNotu     String?
+
+  // --- periyodik bakım hatırlatma ---
+  sonrakiGelisTarihi DateTime?
+  sonrakiGelisKm     Int?
+
+  // --- tutarlar (kalemlerden hesaplanır) ---
+  tahminiTutar    Decimal @default(0) @db.Decimal(18, 2)
+  parcaToplam     Decimal @default(0) @db.Decimal(18, 2)
+  iscilikToplam   Decimal @default(0) @db.Decimal(18, 2)
+  araToplam       Decimal @default(0) @db.Decimal(18, 2)
+  kdvToplam       Decimal @default(0) @db.Decimal(18, 2)
+  genelToplam     Decimal @default(0) @db.Decimal(18, 2)
+  kdvDahilGirilir Boolean @default(false)
+
+  faturaKesildi Boolean @default(false)
+  odendi        Boolean @default(false)
+
+  // --- garanti takibi (kart türü GARANTİ olan işler) ---
+  /// Garantiyi üstlenen firma (distribütör, ana bayi, sigorta) — cari kartı.
+  garantiVerenId     Int?
+  garantiVeren       Cari?     @relation("GarantiVeren", fields: [garantiVerenId], references: [id])
+  /// Garanti veren firmanın açtığı dosya / talep numarası.
+  garantiDosyaNo     String?
+  /// Firmanın verdiği onay (yetki) numarası — ödeme bu numara ile takip edilir.
+  garantiOnayNo      String?
+  garantiTalepTarihi DateTime?
+  /// BEKLIYOR / ONAYLANDI / RED / ODENDI
+  garantiDurumu      String?
+  /// Garanti kapsamında firmadan istenen tutar (kalan müşteriye yazılır).
+  garantiTutar       Decimal   @default(0) @db.Decimal(18, 2)
+  garantiNotu        String?
+
+  olusturmaTarihi  DateTime   @default(now())
+  guncellemeTarihi DateTime   @updatedAt
+  olusturanId      Int?
+  olusturan        Kullanici? @relation("KabulAcan", fields: [olusturanId], references: [id])
+  guncelleyenId    Int?
+  silindi          Boolean    @default(false)
+  silmeTarihi      DateTime?
+
+  kalemler     KabulKalem[]
+  personeller  KabulPersonel[]
+  evraklar     Evrak[]
+  hareketler   CariHareket[]
+  tahsilatlar  Tahsilat[]
+  ekspertizler Ekspertiz[]
+
+  @@index([durum, silindi])
+  @@index([girisTarihi])
+  @@index([aracId])
+  @@index([cariId])
+  @@index([garantiVerenId])
+  @@map("kabuller")
+}
+
+/// Kabul kartına atanan personeller (Selpar'daki çoklu "personels" alanı).
+/// Ayrı tabloda tutuluyor: tek kart üzerinde birden fazla usta çalışabiliyor
+/// ve personel komisyon raporu kişi bazında kırılım istiyor.
+model KabulPersonel {
+  id      Int   @id @default(autoincrement())
+  kabulId Int
+  kabul   Kabul @relation(fields: [kabulId], references: [id], onDelete: Cascade)
+
+  /// Personel de bir cari kaydıdır (turu = PERSONEL) — Selpar'daki mimarinin aynısı.
+  personelId Int
+  personel   Cari @relation("KabulPersoneli", fields: [personelId], references: [id])
+
+  @@unique([kabulId, personelId])
+  @@index([personelId])
+  @@map("kabul_personelleri")
+}
+
+/// Kabul kartına eklenen parça / işçilik satırları.
+model KabulKalem {
+  id      Int   @id @default(autoincrement())
+  kabulId Int
+  kabul   Kabul @relation(fields: [kabulId], references: [id], onDelete: Cascade)
+
+  sira Int      @default(0)
+  tur  KalemTur
+
+  stokId    Int?
+  stok      Stok?    @relation(fields: [stokId], references: [id])
+  iscilikId Int?
+  iscilik   Iscilik? @relation(fields: [iscilikId], references: [id])
+
+  /// Kataloğa bağlı olmayan serbest satırlar için (dış hizmet vb.)
+  aciklama String
+
+  miktar     Decimal @default(1) @db.Decimal(18, 3)
+  birim      String  @default("ADET")
+  birimFiyat Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani   Decimal @default(20) @db.Decimal(6, 2)
+  tutar      Decimal @default(0) @db.Decimal(18, 2) // KDV hariç
+  kdvTutar   Decimal @default(0) @db.Decimal(18, 2)
+  toplam     Decimal @default(0) @db.Decimal(18, 2)
+
+  /// İşçilik satırında işi yapan usta — personel komisyon raporunu besler.
+  personelId Int?
+  personel   Cari? @relation("KalemPersoneli", fields: [personelId], references: [id])
+
+  /// Garantili satır müşteriye yansıtılmaz: tutarı toplama girer ama
+  /// "garanti kapsamı" olarak ayrı raporlanır (Selpar Garanti Listesi).
+  garantili Boolean @default(false)
+
+  olusturmaTarihi DateTime @default(now())
+
+  @@index([kabulId])
+  @@index([stokId])
+  @@map("kabul_kalemleri")
+}
+
+// ============================================================================
+//  6) İŞÇİLİK KATALOĞU
+// ============================================================================
+
+model Iscilik {
+  id       Int     @id @default(autoincrement())
+  kod      String  @unique
+  ad       String
+  bolumId  Int?
+  bolum    Tanim?  @relation("IscilikBolum", fields: [bolumId], references: [id])
+  sure     Decimal @default(0) @db.Decimal(8, 2) // saat
+  fiyat    Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani Decimal @default(20) @db.Decimal(6, 2)
+  aciklama String?
+  aktif    Boolean @default(true)
+
+  olusturmaTarihi  DateTime @default(now())
+  guncellemeTarihi DateTime @updatedAt
+  silindi          Boolean  @default(false)
+
+  kabulKalemleri KabulKalem[]
+  paketKalemleri BakimPaketiKalem[]
+
+  @@index([ad])
+  @@map("iscilikler")
+}
+
+// ============================================================================
+//  6b) BAKIM PAKETİ (Selpar: Servis > Tanımlamalar > Bakım Paketi)
+// ============================================================================
+
+/// "20.000 km bakımı" gibi hazır iş kalıbı: parça + işçilik listesi.
+/// Kabul kartında paket seçilince satırların tamamı tek hamlede eklenir.
+model BakimPaketi {
+  id       Int     @id @default(autoincrement())
+  kod      String  @unique
+  ad       String
+  aciklama String?
+
+  /// Paketi daraltan ön koşullar — sadece filtreleme/uyarı amaçlı, zorlayıcı değil.
+  /// (Ör. "SUV · 20.000 km"); kullanıcı istediği kartta yine de uygulayabilir.
+  aracTuru String?
+  marka    String?
+  km       Int?
+
+  aktif   Boolean @default(true)
+  silindi Boolean @default(false)
+
+  olusturmaTarihi  DateTime @default(now())
+  guncellemeTarihi DateTime @updatedAt
+
+  kalemler BakimPaketiKalem[]
+
+  @@index([ad])
+  @@index([silindi, aktif])
+  @@map("bakim_paketleri")
+}
+
+/// Paketin tek satırı. Fiyat BURADA TUTULMAZ (fiyatSabit hariç): kabule
+/// eklenirken stok/işçilik kartındaki güncel fiyat okunur — yoksa zam
+/// yapıldığında paket eski fiyatı sessizce taşırdı.
+model BakimPaketiKalem {
+  id      Int         @id @default(autoincrement())
+  paketId Int
+  paket   BakimPaketi @relation(fields: [paketId], references: [id], onDelete: Cascade)
+
+  sira Int      @default(0)
+  tur  KalemTur
+
+  stokId    Int?
+  stok      Stok?    @relation(fields: [stokId], references: [id])
+  iscilikId Int?
+  iscilik   Iscilik? @relation(fields: [iscilikId], references: [id])
+
+  /// Kataloğa bağlı olmayan serbest satır (dış hizmet vb.) için açıklama.
+  aciklama String
+  miktar   Decimal @default(1) @db.Decimal(18, 3)
+  birim    String  @default("ADET")
+
+  /// Doluysa katalog fiyatının yerine bu fiyat kullanılır (kampanyalı paket).
+  fiyatSabit Decimal? @db.Decimal(18, 4)
+
+  olusturmaTarihi DateTime @default(now())
+
+  @@index([paketId])
+  @@map("bakim_paketi_kalemleri")
+}
+
+// ============================================================================
+//  7) STOK / DEPO
+// ============================================================================
+
+/// Araç marka/model kataloğu (SA-5 / madde 15). Dış açık veri setinden
+/// (us-car-models-data, MIT) + elle TR eki ile seed'lenir. `kilitli = true`
+/// satırlar seed verisidir: Ayarlar ekranından DÜZENLENEMEZ / SİLİNEMEZ.
+/// Kullanıcı yalnızca yeni (kilitli = false) satır ekler.
+model AracModelKatalog {
+  id      Int     @id @default(autoincrement())
+  marka   String
+  model   String
+  kilitli Boolean @default(false)
+  aktif   Boolean @default(true)
+
+  olusturmaTarihi  DateTime @default(now())
+  guncellemeTarihi DateTime @updatedAt
+  olusturanId      Int?
+
+  @@unique([marka, model])
+  @@index([marka])
+  @@map("arac_model_katalog")
+}
+
+model Depo {
+  id         Int     @id @default(autoincrement())
+  kod        String  @unique
+  ad         String
+  adres      String?
+  varsayilan Boolean @default(false)
+  aktif      Boolean @default(true)
+
+  stoklar      Stok[]
+  hareketler   StokHareket[]
+  sayimFisleri SayimFisi[]
+  girisFisleri StokGirisFisi[]
+
+  transferKaynaklari StokTransferFisi[] @relation("StokTransferKaynak")
+  transferHedefleri  StokTransferFisi[] @relation("StokTransferHedef")
+
+  @@map("depolar")
+}
+
+model Stok {
+  id           Int     @id @default(autoincrement())
+  kod          String  @unique // ürün no
+  ad           String
+  barkod       String?
+  ureticiKodu  String?
+  uretici      String?
+  orijinalKodu String?
+  muadilNo     String?
+  ozelNo       String?
+  tipi         String? // PARCA / SARF / HIZMET
+
+  // --- sınıflandırma ---
+  grupKodu  String?
+  urunGrubu String?
+  gtipNo    String?
+
+  // --- stok ---
+  birim        String  @default("ADET")
+  mevcutMiktar Decimal @default(0) @db.Decimal(18, 3)
+  minSeviye    Decimal @default(0) @db.Decimal(18, 3)
+  maxSeviye    Decimal @default(0) @db.Decimal(18, 3)
+  depoId       Int?
+  depo         Depo?   @relation(fields: [depoId], references: [id])
+  rafYeri      String?
+
+  // --- fiyat ---
+  alisFiyat       Decimal @default(0) @db.Decimal(18, 4)
+  satisFiyat      Decimal @default(0) @db.Decimal(18, 4)
+  ortalamaMaliyet Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani        Decimal @default(20) @db.Decimal(6, 2)
+  paraBirimi      String  @default("TRY")
+
+  // --- lastik alanları (Selpar lastikçilere de hitap ediyor) ---
+  desen           String?
+  mevsim          String?
+  hizYuk          String?
+  yakitDirenci    String?
+  gurultuSeviyesi String?
+  gurultuSinifi   String?
+
+  // --- araç uygunluğu (SA-5 / tipi = ARAC): parçanın uyduğu araç.
+  //     marka/model AracModelKatalog'tan seçilir, yıl serbest aralık ---
+  uygunMarka  String?
+  uygunModel  String?
+  uygunYilBas Int?
+  uygunYilBit Int?
+
+  resimUrl    String?
+  teknikBilgi String?
+  aciklama    String?
+  aktif       Boolean @default(true)
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  hareketler         StokHareket[]
+  kabulKalemleri     KabulKalem[]
+  evrakKalemleri     EvrakKalem[]
+  siparisKalemleri   SiparisKalem[]
+  teklifKalemleri    TeklifKalem[]
+  ekspertizKalemleri EkspertizKalem[]
+  paketKalemleri     BakimPaketiKalem[]
+  sayimKalemleri     SayimKalem[]
+  transferKalemleri  StokTransferKalem[]
+  girisKalemleri     StokGirisKalem[]
+
+  @@index([ad])
+  @@index([barkod])
+  @@index([silindi, aktif])
+  @@map("stoklar")
+}
+
+/// Her giriş/çıkış buraya yazılır. `Stok.mevcutMiktar` bunun özetidir.
+model StokHareket {
+  id     Int   @id @default(autoincrement())
+  stokId Int
+  stok   Stok  @relation(fields: [stokId], references: [id])
+  depoId Int?
+  depo   Depo? @relation(fields: [depoId], references: [id])
+
+  tur        StokHareketTur
+  tarih      DateTime       @default(now())
+  miktar     Decimal        @db.Decimal(18, 3)
+  birimFiyat Decimal        @default(0) @db.Decimal(18, 4)
+  tutar      Decimal        @default(0) @db.Decimal(18, 2)
+
+  /// Hareketin kaynağı: hangi evrak / hangi kabul kartı.
+  evrakId         Int?
+  kabulId         Int?
+  sayimFisiId     Int?
+  stokGirisFisiId Int?
+
+  /// Hareketi doğuran kabul satırı. Satır düzeltilip silindiğinde stoğun
+  /// geri yüklenebilmesi için gerekli — sadece kabulId ile hangi hareketin
+  /// hangi satıra ait olduğu ayırt edilemezdi.
+  kabulKalemId Int?
+
+  aciklama    String?
+  kullaniciId Int?
+
+  olusturmaTarihi DateTime @default(now())
+
+  @@index([stokId, tarih])
+  @@index([tarih])
+  @@map("stok_hareketleri")
+}
+
+/// Sayım fişi — depo/ürün grubu filtresiyle sayılacak stokların dondurulduğu
+/// fiş başlığı. TASLAK iken satır ekle/çıkar/miktar değiştir serbest;
+/// ONAYLANDI olunca fark StokHareket (tur=SAYIM) olarak işlenir ve fiş
+/// kilitlenir — yanlış girilen sayım yeni bir fişle düzeltilir, geriye
+/// dönük değiştirilmez (diğer evrak tiplerindeki TASLAK/KESILDI mantığının
+/// aynısı).
+model SayimFisi {
+  id    Int    @id @default(autoincrement())
+  fisNo String @unique
+
+  depoId    Int?
+  depo      Depo?   @relation(fields: [depoId], references: [id])
+  /// Fiş açılırken kullanılan ürün grubu filtresi — yalnız bilgi amaçlı
+  /// (rapor/liste ekranında gösterilir), onay sonrası tekrar uygulanmaz.
+  urunGrubu String?
+
+  durum SayimDurum @default(TASLAK)
+  tarih DateTime   @default(now())
+
+  aciklama String?
+
+  olusturanId Int?
+  onaylayanId Int?
+  onayTarihi  DateTime?
+
+  olusturmaTarihi DateTime @default(now())
+
+  kalemler SayimKalem[]
+
+  @@index([durum])
+  @@map("sayim_fisleri")
+}
+
+/// Sayım satırı. `sistemMiktar` fiş açıldığı andaki (donmuş) `Stok.mevcutMiktar`,
+/// `sayilanMiktar` sayım sonucu, `fark` = sayılan - sistem. Onaylanınca `fark`
+/// kadar StokHareket yazılır — satırın kendisi hiç değişmez, fişin tarihsel
+/// kaydı budur.
+model SayimKalem {
+  id          Int       @id @default(autoincrement())
+  sayimFisiId Int
+  sayimFisi   SayimFisi @relation(fields: [sayimFisiId], references: [id])
+  stokId      Int
+  stok        Stok      @relation(fields: [stokId], references: [id])
+
+  sistemMiktar  Decimal @db.Decimal(18, 3)
+  sayilanMiktar Decimal @db.Decimal(18, 3)
+  fark          Decimal @db.Decimal(18, 3)
+
+  aciklama String?
+
+  @@unique([sayimFisiId, stokId])
+  @@map("sayim_kalemleri")
+}
+
+/// Depolar arası transfer fişi — "kart taşıma" modeli: bir stok kartı tek bir
+/// depoya ait olabildiği için (Stok.kod @unique, tek depoId/mevcutMiktar)
+/// transfer kısmi miktar bölmez, kartın TÜMÜNÜ kaynak depodan hedef depoya
+/// taşır. Onaylanınca kaynakta CIKIS + hedefte TRANSFER (giriş) olmak üzere
+/// çift StokHareket yazılır (net mevcutMiktar değişmez, yalnız depoId
+/// değişir) — sayım fişindeki TASLAK→ONAYLANDI/İPTAL akışının aynısı,
+/// ayrıca onaylanmış bir fişi GERI_ALINDI'ya çeviren tersine hareket çifti.
+model StokTransferFisi {
+  id    Int    @id @default(autoincrement())
+  fisNo String @unique
+
+  kaynakDepoId Int
+  kaynakDepo   Depo @relation("StokTransferKaynak", fields: [kaynakDepoId], references: [id])
+  hedefDepoId  Int
+  hedefDepo    Depo @relation("StokTransferHedef", fields: [hedefDepoId], references: [id])
+
+  durum StokTransferDurum @default(TASLAK)
+  tarih DateTime          @default(now())
+
+  aciklama String?
+
+  olusturanId    Int?
+  onaylayanId    Int?
+  onayTarihi     DateTime?
+  geriAlanId     Int?
+  geriAlmaTarihi DateTime?
+
+  olusturmaTarihi DateTime @default(now())
+
+  kalemler StokTransferKalem[]
+
+  @@index([durum])
+  @@map("stok_transfer_fisleri")
+}
+
+/// Transfer satırı. `miktar` onay anında yazılan gerçek miktardır (kartın o
+/// andaki canlı mevcutMiktar'ı) — sayımdaki gibi taslakta dondurulmaz, çünkü
+/// bu bir sayım değil, kartın tamamının taşınmasıdır.
+model StokTransferKalem {
+  id                 Int              @id @default(autoincrement())
+  stokTransferFisiId Int
+  stokTransferFisi   StokTransferFisi @relation(fields: [stokTransferFisiId], references: [id])
+  stokId             Int
+  stok               Stok             @relation(fields: [stokId], references: [id])
+
+  miktar Decimal @default(0) @db.Decimal(18, 3)
+
+  @@unique([stokTransferFisiId, stokId])
+  @@map("stok_transfer_kalemleri")
+}
+
+/// Stok giriş fişi (SA-5 / madde 18). Alış faturası olmadan depoya mal
+/// girişi — barkod/arama ile MEVCUT ürün seçilir, satırda miktar ve alış
+/// fiyatı düzenlenir. TASLAK iken satırlar serbest; ONAYLANDI olunca her
+/// satır için StokHareket (tur=GIRIS) yazılır, `Stok.mevcutMiktar` artar,
+/// ağırlıklı ortalama maliyet + son alış fiyatı güncellenir. GERI_ALINDI
+/// ters hareketle bakiyeyi eski hâline döndürür (Transfer fişindeki desen).
+model StokGirisFisi {
+  id    Int    @id @default(autoincrement())
+  fisNo String @unique
+
+  depoId Int?
+  depo   Depo? @relation(fields: [depoId], references: [id])
+
+  // Satıcı serbest metin — fatura yoksa da malın kimden geldiği kayıt
+  // altında olsun; cari kaydı aramaya zorlanmıyor, elle yazılıyor.
+  saticiAdi String?
+
+  durum StokGirisDurum @default(TASLAK)
+  tarih DateTime       @default(now())
+
+  aciklama String?
+
+  olusturanId    Int?
+  onaylayanId    Int?
+  onayTarihi     DateTime?
+  geriAlanId     Int?
+  geriAlmaTarihi DateTime?
+
+  olusturmaTarihi DateTime @default(now())
+
+  kalemler StokGirisKalem[]
+
+  @@map("stok_giris_fisleri")
+}
+
+model StokGirisKalem {
+  id              Int           @id @default(autoincrement())
+  stokGirisFisiId Int
+  stokGirisFisi   StokGirisFisi @relation(fields: [stokGirisFisiId], references: [id])
+  stokId          Int
+  stok            Stok          @relation(fields: [stokId], references: [id])
+
+  miktar     Decimal @default(0) @db.Decimal(18, 3)
+  birimFiyat Decimal @default(0) @db.Decimal(18, 4)
+  tutar      Decimal @default(0) @db.Decimal(18, 2)
+
+  @@unique([stokGirisFisiId, stokId])
+  @@map("stok_giris_kalemleri")
+}
+
+// ============================================================================
+//  8) EVRAK (fatura / irsaliye)
+// ============================================================================
+
+model Evrak {
+  id         Int        @id @default(autoincrement())
+  evrakNo    String
+  tur        EvrakTur
+  durum      EvrakDurum @default(TASLAK)
+  tarih      DateTime   @default(now())
+  vadeTarihi DateTime?
+
+  cariId    Int
+  cari      Cari     @relation(fields: [cariId], references: [id])
+  kabulId   Int?
+  kabul     Kabul?   @relation(fields: [kabulId], references: [id])
+  /// Faturanın hangi siparişten dönüştürüldüğü (adım 9.7) — kabulId ile aynı
+  /// mantık: bilgi amaçlı geri bağ, kalemler kopyalanır (canlı ilişki değil).
+  siparisId Int?
+  siparis   Siparis? @relation(fields: [siparisId], references: [id])
+
+  aciklama   String?
+  paraBirimi String  @default("TRY")
+  kur        Decimal @default(1) @db.Decimal(18, 6)
+
+  araToplam   Decimal @default(0) @db.Decimal(18, 2)
+  kdvToplam   Decimal @default(0) @db.Decimal(18, 2)
+  genelToplam Decimal @default(0) @db.Decimal(18, 2)
+
+  eFaturaMi   Boolean @default(false)
+  eFaturaUuid String?
+
+  /// İrsaliye bilgileri (adım 11.8, İrsaliyeli Fatura ve bağımsız İrsaliye
+  /// şablonu için) — gerçek dış entegrasyon (e-İrsaliye XML) kapsam dışı,
+  /// elle girilir. Ayrı bir tablo AÇILMADI: irsaliye çoğunlukla faturayla
+  /// aynı evrakta yaşıyor (Selpar'daki "İrsaliyeli Fatura" tek belge).
+  irsaliyeNo     String?
+  irsaliyeTarihi DateTime?
+  tasiyiciPlaka  String?
+  sevkAdresi     String?
+
+  /// Tevkifat (adım 11.8, Tevkifatlı Fatura) — gerçek e-Fatura tevkifat kodu
+  /// listesi entegre değil, kod ve oran elle girilir (6.3'teki Sanal POS
+  /// placeholder deseniyle aynı mantık).
+  tevkifatKodu  String?
+  tevkifatOrani Decimal? @db.Decimal(6, 2)
+
+  /// İade Faturası (adım 11.8) hangi orijinal evraka istinaden kesildiğini
+  /// göstermek için — canlı bir ilişki DEĞİL (kaynak evrak silinmiş/farklı
+  /// bir işletmeden gelmiş olabilir), yalnız kâğıtta görünecek serbest metin.
+  kaynakEvrakNo String?
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  kalemler   EvrakKalem[]
+  hareketler CariHareket[]
+
+  @@unique([tur, evrakNo])
+  @@index([tarih])
+  @@index([cariId])
+  @@index([siparisId])
+  @@map("evraklar")
+}
+
+model EvrakKalem {
+  id      Int   @id @default(autoincrement())
+  evrakId Int
+  evrak   Evrak @relation(fields: [evrakId], references: [id], onDelete: Cascade)
+
+  sira     Int    @default(0)
+  stokId   Int?
+  stok     Stok?  @relation(fields: [stokId], references: [id])
+  aciklama String
+
+  miktar     Decimal @default(1) @db.Decimal(18, 3)
+  birim      String  @default("ADET")
+  birimFiyat Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani   Decimal @default(20) @db.Decimal(6, 2)
+  tutar      Decimal @default(0) @db.Decimal(18, 2)
+  kdvTutar   Decimal @default(0) @db.Decimal(18, 2)
+  toplam     Decimal @default(0) @db.Decimal(18, 2)
+
+  @@index([evrakId])
+  @@map("evrak_kalemleri")
+}
+
+// ============================================================================
+//  8b) SİPARİŞ (alınan / verilen — adım 9.5, 9.6)
+// ============================================================================
+
+/**
+ * Siparişin faturadan (Evrak) FARKI: bakiye/stok/cari hareketi ÜRETMEZ.
+ * Sadece "ne söz verildi, ne kadarı teslim edildi" takibi — para ve stok
+ * hareketi yalnız siparişten faturaya dönüştürüldüğünde (adım 9.7) doğar.
+ * O yüzden EvrakKalem'in aksine burada `sevkMiktar` alanı var (kalemin ne
+ * kadarının faturalandığı/sevk edildiği) ve `durum` KISMI_SEVK'i de kapsar.
+ */
+model Siparis {
+  id           Int          @id @default(autoincrement())
+  siparisNo    String
+  tip          SiparisTip   @default(ALINAN)
+  durum        SiparisDurum @default(TASLAK)
+  tarih        DateTime     @default(now())
+  teslimTarihi DateTime?
+
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+
+  aciklama   String?
+  paraBirimi String  @default("TRY")
+
+  araToplam   Decimal @default(0) @db.Decimal(18, 2)
+  kdvToplam   Decimal @default(0) @db.Decimal(18, 2)
+  genelToplam Decimal @default(0) @db.Decimal(18, 2)
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  /// Bu siparişin kaynaklandığı teklif (adım 9.8) — bilgi amaçlı geri bağ,
+  /// kalemler kopyalanır (canlı ilişki değil), Evrak.siparisId ile aynı mantık.
+  teklifId Int?
+  teklif   Teklif? @relation(fields: [teklifId], references: [id])
+
+  kalemler SiparisKalem[]
+  /// Bu siparişten dönüştürülen faturalar (adım 9.7) — kısmi sevkiyatta birden çok olabilir.
+  evraklar Evrak[]
+
+  @@unique([tip, siparisNo])
+  @@index([tarih])
+  @@index([cariId])
+  @@index([teklifId])
+  @@map("siparisler")
+}
+
+model SiparisKalem {
+  id        Int     @id @default(autoincrement())
+  siparisId Int
+  siparis   Siparis @relation(fields: [siparisId], references: [id], onDelete: Cascade)
+
+  sira     Int    @default(0)
+  stokId   Int?
+  stok     Stok?  @relation(fields: [stokId], references: [id])
+  aciklama String
+
+  miktar     Decimal @default(1) @db.Decimal(18, 3)
+  birim      String  @default("ADET")
+  birimFiyat Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani   Decimal @default(20) @db.Decimal(6, 2)
+  tutar      Decimal @default(0) @db.Decimal(18, 2)
+  kdvTutar   Decimal @default(0) @db.Decimal(18, 2)
+  toplam     Decimal @default(0) @db.Decimal(18, 2)
+
+  /// Bu satırın ne kadarı sevk edildi/faturalandı — bakiye = miktar - sevkMiktar.
+  /// Adım 9.7'ye kadar hep 0 kalır (dönüştürme akışı henüz yok).
+  sevkMiktar Decimal @default(0) @db.Decimal(18, 3)
+
+  @@index([siparisId])
+  @@map("siparis_kalemleri")
+}
+
+// ============================================================================
+//  8B) TEKLİF (adım 9.8)
+// ============================================================================
+
+model Teklif {
+  id               Int         @id @default(autoincrement())
+  teklifNo         String
+  durum            TeklifDurum @default(TASLAK)
+  tarih            DateTime    @default(now())
+  /// Tekliften sonra kaç gün geçerli olduğu bilgisi — "kabule dönüştür"
+  /// akışını ENGELLEMEZ, yalnızca ekranda uyarı/bilgi amaçlıdır.
+  gecerlilikTarihi DateTime?
+
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+
+  aciklama   String?
+  paraBirimi String  @default("TRY")
+
+  araToplam   Decimal @default(0) @db.Decimal(18, 2)
+  kdvToplam   Decimal @default(0) @db.Decimal(18, 2)
+  genelToplam Decimal @default(0) @db.Decimal(18, 2)
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  kalemler   TeklifKalem[]
+  /// Bu teklifin dönüştürüldüğü alınan sipariş(ler) — normalde tek kayıt
+  /// (teklif TEK SEFERDE tam dönüştürülür, sipariştekinin aksine kısmi yok).
+  siparisler Siparis[]
+
+  @@unique([teklifNo])
+  @@index([tarih])
+  @@index([cariId])
+  @@map("teklifler")
+}
+
+model TeklifKalem {
+  id       Int    @id @default(autoincrement())
+  teklifId Int
+  teklif   Teklif @relation(fields: [teklifId], references: [id], onDelete: Cascade)
+
+  sira     Int    @default(0)
+  stokId   Int?
+  stok     Stok?  @relation(fields: [stokId], references: [id])
+  aciklama String
+
+  miktar     Decimal @default(1) @db.Decimal(18, 3)
+  birim      String  @default("ADET")
+  birimFiyat Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani   Decimal @default(20) @db.Decimal(6, 2)
+  tutar      Decimal @default(0) @db.Decimal(18, 2)
+  kdvTutar   Decimal @default(0) @db.Decimal(18, 2)
+  toplam     Decimal @default(0) @db.Decimal(18, 2)
+
+  @@index([teklifId])
+  @@map("teklif_kalemleri")
+}
+
+// ============================================================================
+//  9) TAHSİLAT / TEDİYE + CARİ EKSTRE
+// ============================================================================
+
+model Tahsilat {
+  id     Int  @id @default(autoincrement())
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+
+  fisNo      String
+  tur        TahsilatTur
+  tarih      DateTime    @default(now())
+  tutar      Decimal     @db.Decimal(18, 2)
+  odemeSekli OdemeSekli  @default(NAKIT)
+  /// Serbest metin alan; kasa kartı gelmeden önce girilen kayıtlar için duruyor.
+  kasaBanka  String?
+  /// Kasa kartı bağı. Tahsilat/Ödeme modülü (adım 6.1) bu alanı doldurup
+  /// karşılığında bir KasaHareket satırı yazacak.
+  kasaId     Int?
+  kasa       Kasa?       @relation(fields: [kasaId], references: [id])
+  aciklama   String?
+
+  evrakId Int?
+
+  /// SANAL POS PLACEHOLDER (adım 6.3). Gerçek POS entegrasyonu kapsam dışı
+  /// (HAFIZA 27. bölüm); kredi kartıyla alınan tahsilatın dekont bilgisi
+  /// ELLE giriliyor. Kart numarasının tamamı BİLİNÇLİ olarak tutulmuyor —
+  /// PCI-DSS kapsamına girmemek için yalnız son 4 hane saklanıyor.
+  posBanka      String?
+  posKartSahibi String?
+  posSon4       String?
+  posProvizyon  String?
+  posTaksit     Int?
+
+  /// Hızlı Tahsilat (adım 6.2) fişi doğrudan bir kabul kartına bağlar; kartın
+  /// "ne kadarı tahsil edildi / kalanı ne" hesabı bu bağdan çıkıyor. Bağ
+  /// olmasaydı fiş cariye yazılırdı ama hangi iş emrine ait olduğu kaybolurdu.
+  kabulId Int?
+  kabul   Kabul? @relation(fields: [kabulId], references: [id])
+
+  olusturmaTarihi DateTime  @default(now())
+  olusturanId     Int?
+  silindi         Boolean   @default(false)
+  silmeTarihi     DateTime?
+
+  hareketler      CariHareket[]
+  kasaHareketleri KasaHareket[]
+  /// Çek / senetle ödenen fişin otomatik açtığı portföy kaydı (adım 6.3).
+  cekSenet        CekSenet?
+
+  @@unique([tur, fisNo])
+  @@index([cariId, tarih])
+  @@index([tarih])
+  @@index([kabulId])
+  @@map("tahsilatlar")
+}
+
+/// Cari ekstresi / mizan / yaşlandırma raporlarının tek kaynağı.
+/// Bakiyeyi etkileyen her işlem buraya bir satır yazar.
+model CariHareket {
+  id     Int  @id @default(autoincrement())
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+
+  tarih      DateTime       @default(now())
+  tur        CariHareketTur
+  borc       Decimal        @default(0) @db.Decimal(18, 2)
+  alacak     Decimal        @default(0) @db.Decimal(18, 2)
+  aciklama   String?
+  vadeTarihi DateTime?
+
+  evrakId    Int?
+  evrak      Evrak?    @relation(fields: [evrakId], references: [id])
+  tahsilatId Int?
+  tahsilat   Tahsilat? @relation(fields: [tahsilatId], references: [id])
+  kabulId    Int?
+  kabul      Kabul?    @relation(fields: [kabulId], references: [id])
+  cekSenetId Int?
+  cekSenet   CekSenet? @relation(fields: [cekSenetId], references: [id])
+
+  olusturmaTarihi DateTime @default(now())
+  olusturanId     Int?
+  silindi         Boolean  @default(false)
+
+  @@index([cariId, tarih])
+  @@index([tarih])
+  @@map("cari_hareketleri")
+}
+
+// ============================================================================
+//  9b) KASA (nakit / banka / POS) + KASA DEFTERİ
+// ============================================================================
+
+/// Para kutusu. Selpar'da kasa serbest metindi (`Tahsilat.kasaBanka`);
+/// kart hâline getirildi ki kasa bazlı bakiye ve virman mümkün olsun.
+model Kasa {
+  id  Int     @id @default(autoincrement())
+  kod String  @unique // KS0001 — numaratörden
+  ad  String
+  tur KasaTur @default(NAKIT)
+
+  paraBirimi String @default("TRY")
+
+  // --- banka kasası alanları (tur = BANKA) ---
+  banka     String?
+  bankaSube String?
+  hesapNo   String?
+  ibanNo    String?
+
+  /// POS kasasında komisyon oranı. Otomatik gider satırı YAZILMAZ; komisyon
+  /// Tahsilat/Ödeme modülü (adım 6.1) POS tahsilatını işlerken hesaplayacak.
+  /// Selpar'da da komisyon kasa kartında değil tahsilat tarafında duruyor.
+  posKomisyonOrani Decimal @default(0) @db.Decimal(6, 2)
+
+  /// Açılış devri. Hareket olarak da yazılır (tur = ACILIS) — bakiye tek
+  /// kaynaktan (hareketler) hesaplansın diye.
+  acilisBakiye Decimal @default(0) @db.Decimal(18, 2)
+
+  /// Hareketlerden yeniden hesaplanan özet. `Cari.bakiye` ile aynı desen:
+  /// asla elle artırılmaz, `kasaBakiyeyiHesapla` yazar.
+  bakiye Decimal @default(0) @db.Decimal(18, 2)
+
+  notu  String?
+  sira  Int     @default(0)
+  aktif Boolean @default(true)
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  hareketler      KasaHareket[] @relation("KasaninHareketleri")
+  karsiHareketler KasaHareket[] @relation("VirmanKarsiKasasi")
+  tahsilatlar     Tahsilat[]
+  tahsilEdilenler CekSenet[]    @relation("CekSenetTahsilKasasi")
+
+  @@index([aktif, silindi])
+  @@map("kasalar")
+}
+
+/// Kasa defterinin tek satırı. Virman İKİ satır üretir (çıkan kasada
+/// VIRMAN_CIKIS, giren kasada VIRMAN_GIRIS) ve `virmanGrubu` ile eşleşirler:
+/// tek satır + karşı kasa tutulsaydı her raporda "bu satır hangi kasada?"
+/// istisnası çıkardı.
+model KasaHareket {
+  id     Int  @id @default(autoincrement())
+  kasaId Int
+  kasa   Kasa @relation("KasaninHareketleri", fields: [kasaId], references: [id])
+
+  tarih DateTime       @default(now())
+  tur   KasaHareketTur
+  /// DAİMA pozitif. Yön `tur` alanından okunur.
+  tutar Decimal        @db.Decimal(18, 2)
+
+  aciklama   String?
+  belgeNo    String?
+  /// Tanim(tur = MASRAF) adı — çıkış satırlarını gider türüne göre gruplamak için.
+  masrafTuru String?
+
+  cariId Int?
+  cari   Cari? @relation(fields: [cariId], references: [id])
+
+  // --- virman eşleşmesi ---
+  karsiKasaId Int?
+  karsiKasa   Kasa?   @relation("VirmanKarsiKasasi", fields: [karsiKasaId], references: [id])
+  virmanGrubu String?
+
+  /// İleriki bağlar: satırı üreten kaynak. Tahsilat/Ödeme (6.1) ve çek-senet
+  /// tahsili bu alanları doldurur; elle girilen satırlarda ikisi de boştur.
+  tahsilatId Int?
+  tahsilat   Tahsilat? @relation(fields: [tahsilatId], references: [id])
+  cekSenetId Int?
+  cekSenet   CekSenet? @relation(fields: [cekSenetId], references: [id])
+
+  olusturmaTarihi DateTime  @default(now())
+  olusturanId     Int?
+  silindi         Boolean   @default(false)
+  silmeTarihi     DateTime?
+
+  @@index([kasaId, tarih])
+  @@index([tarih])
+  @@index([virmanGrubu])
+  @@map("kasa_hareketleri")
+}
+
+// ============================================================================
+//  9c) ÇEK / SENET
+// ============================================================================
+
+/// Alınan ve verilen kıymetli evrak. Portföyde bekleyen kâğıt henüz para
+/// değildir; kasaya ancak tahsil/ödeme anında dokunur.
+model CekSenet {
+  id        Int    @id @default(autoincrement())
+  portfoyNo String @unique // CS0001 — numaratörden
+
+  tur CekSenetTur @default(CEK)
+  yon CekSenetYon @default(ALINAN)
+
+  /// Kimden aldık / kime verdik.
+  cariId Int?
+  cari   Cari? @relation("CekSenetCarisi", fields: [cariId], references: [id])
+
+  tutar      Decimal @db.Decimal(18, 2)
+  paraBirimi String  @default("TRY")
+
+  /// Vade takibinin ekseni: "bugün yapılacak tahsilat / ödeme" bu alandan çıkar.
+  vadeTarihi   DateTime
+  kesideTarihi DateTime?
+  kesideYeri   String?
+  /// Keşideci — müşteri kendi çekini vermek zorunda değil (müşteri çeki / ciro).
+  borclu       String?
+
+  banka     String?
+  bankaSube String?
+  hesapNo   String?
+  /// Çekte çek numarası, senette seri no.
+  belgeNo   String?
+
+  durum CekSenetDurum @default(PORTFOYDE)
+
+  // --- onay işlemleri ---
+  onayDurumu  OnayDurum @default(BEKLIYOR)
+  onaylayanId Int?
+  onayTarihi  DateTime?
+  onayNotu    String?
+
+  // --- tahsil / ödeme ---
+  tahsilKasaId Int?
+  tahsilKasa   Kasa?     @relation("CekSenetTahsilKasasi", fields: [tahsilKasaId], references: [id])
+  tahsilTarihi DateTime?
+
+  /// Ciro edildiyse hangi cariye devredildi.
+  ciroCariId Int?
+  ciroCari   Cari? @relation("CekSenetCiroCarisi", fields: [ciroCariId], references: [id])
+
+  aciklama String?
+
+  /// Adım 6.3 — kâğıdı doğuran tahsilat/ödeme fişi. Dolu olduğunda kayıt
+  /// OTOMATİK açılmıştır: cariye YAZMAZ (fiş zaten yazdı, iki kez sayılırdı)
+  /// ve Çek-Senet formundan düzenlenemez; tutar/vade fişten değişir.
+  tahsilatId Int?      @unique
+  tahsilat   Tahsilat? @relation(fields: [tahsilatId], references: [id])
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  hareketler      CekSenetHareket[]
+  kasaHareketleri KasaHareket[]
+  cariHareketleri CariHareket[]
+
+  @@index([yon, durum, silindi])
+  @@index([vadeTarihi])
+  @@index([cariId])
+  @@index([onayDurumu])
+  @@map("cek_senetler")
+}
+
+/// Durum geçiş geçmişi. Tek `durum` alanı "ne zaman tahsile verildi, ne zaman
+/// karşılıksız çıktı" sorusunu cevaplayamaz; işlem logu teknik iz, bu ise
+/// ekranda gösterilen iş verisi.
+model CekSenetHareket {
+  id         Int      @id @default(autoincrement())
+  cekSenetId Int
+  cekSenet   CekSenet @relation(fields: [cekSenetId], references: [id], onDelete: Cascade)
+
+  tarih        DateTime       @default(now())
+  oncekiDurum  CekSenetDurum?
+  yeniDurum    CekSenetDurum
+  aciklama     String?
+  kasaId       Int?
+  cariId       Int?
+  kullaniciId  Int?
+  kullaniciKod String?
+
+  @@index([cekSenetId, tarih])
+  @@map("cek_senet_hareketleri")
+}
+
+// ============================================================================
+//  10) İŞLEM LOGU (kim, ne zaman, ne yaptı)
+// ============================================================================
+
+/// KARA LİSTE GEÇMİŞİ
+///
+/// Bir cari kaç kez kara listeye alındıysa o kadar satır olur. Açık kayıt =
+/// `kaldirmaTarihi` boş olan satır; carinin `karaListe` alanı bunun
+/// özetidir. Kullanıcı id'sinin yanında kodu da yazılıyor: kullanıcı
+/// sonradan silinse bile "kim koymuş" sorusu cevapsız kalmasın.
+model KaraListeKaydi {
+  id     Int  @id @default(autoincrement())
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+
+  alisTarihi DateTime   @default(now())
+  neden      String
+  ekleyenId  Int?
+  ekleyen    Kullanici? @relation("KaraListeEkleyen", fields: [ekleyenId], references: [id])
+  ekleyenKod String?
+
+  kaldirmaTarihi DateTime?
+  kaldirmaNedeni String?
+  kaldiranId     Int?
+  kaldiran       Kullanici? @relation("KaraListeKaldiran", fields: [kaldiranId], references: [id])
+  kaldiranKod    String?
+
+  @@index([cariId, alisTarihi])
+  @@index([kaldirmaTarihi])
+  @@map("kara_liste_kayitlari")
+}
+
+// ============================================================================
+//  10b) PERSONEL MESAİ / PUANTAJ (adım 7.3)
+// ============================================================================
+
+model IslemLog {
+  id Int @id @default(autoincrement())
+
+  kullaniciId  Int?
+  kullanici    Kullanici? @relation(fields: [kullaniciId], references: [id])
+  kullaniciKod String? // kullanıcı silinse bile iz kalsın
+
+  tarih     DateTime @default(now())
+  islem     LogIslem
+  tablo     String? // örn: "cariler"
+  kayitId   Int?
+  aciklama  String?
+  eskiDeger Json?
+  yeniDeger Json?
+  ip        String?
+  tarayici  String?
+
+  @@index([tarih])
+  @@index([kullaniciId, tarih])
+  @@index([tablo, kayitId])
+  @@map("islem_loglari")
+}
+
+// ============================================================================
+//  13) EKSPERTİZ (ÖN TAHMİN / EKSPER SURETİ)
+// ============================================================================
+
+/// Ekspertiz kartının yaşam döngüsü. Teklif akışının kardeşi: kart önce
+/// hazırlanır, sigortaya/müşteriye gider, onaylanırsa Kabul kartına dönüşür.
+enum EkspertizDurum {
+  TASLAK // hazırlanıyor
+  GONDERILDI // sigortaya / müşteriye verildi, cevap bekleniyor
+  ONAYLANDI // iş onaylandı, kabule dönüştürülebilir
+  RED // onaylanmadı, iş alınmadı
+  KABULE_DONDU // kabul kartı açıldı, kart kapandı
+}
+
+/// Hangi araç şemasının kullanılacağı. Panelvanın sürgülü kapısı ve çift
+/// kanat arka kapağı binek şemasında yok — yanlış şemayla işaretlenen kâğıt
+/// hatalı olurdu, bu yüzden şema araç tipine göre ayrıldı.
+enum EkspertizSema {
+  BINEK
+  TICARI // kamyonet / panelvan
+}
+
+/// Bir karoser panelinin tespit edilen durumu. ORİJİNAL olan paneller
+/// KAYDEDİLMEZ (varsayılan kabul edilir) — boş satır birikmesin.
+enum PanelDurum {
+  LOKAL_BOYALI
+  BOYALI
+  DEGISMIS
+}
+
+/// EKSPERTİZ KARTI — matbu "Eksper Sureti" formunun dijital karşılığı.
+///
+/// Hiçbir muhasebe hareketi ÜRETMEZ (cari/kasa/stok). Kâğıdın kendi ibaresi
+/// "BU EKSPERTİZ BİR ÖN TAHMİNDİR" diyor; onaylanmamış tahminler cari
+/// bakiyeye girerse müşteri borcu sahte şişer, mizan ve tahsilat raporları
+/// bozulurdu. Para ancak `kabulId` dolduğunda, normal kabul akışıyla işler.
+model Ekspertiz {
+  id          Int            @id @default(autoincrement())
+  ekspertizNo String         @unique // otomatik: EKS-000001
+  /// Matbu bloknottaki kırmızı sıra no (örn "00591"). Kâğıt tükenene kadar
+  /// fiziksel nüsha ile dijital kaydı eşleştirmek için elle girilir.
+  matbuNo     String?
+  durum       EkspertizDurum @default(TASLAK)
+
+  cariId Int
+  cari   Cari @relation(fields: [cariId], references: [id])
+  aracId Int
+  arac   Arac @relation(fields: [aracId], references: [id])
+
+  // --- matbu formun üst bloğu ---
+  soforTc      String? // "Şöför T.C."
+  tcKimlikNo   String? // araç sahibi T.C.
+  karsiAracTel String?
+  karsiAracTc  String?
+  policeNo     String?
+  dosyaNo      String?
+  hdNo         String? // "H.D. No"
+  sigortaAdi   String?
+  eksperAdi    String?
+
+  km              Int?
+  baslangicTarihi DateTime  @default(now())
+  teslimTarihi    DateTime?
+
+  // --- donanım çeklisti (VAR / YOK) ---
+  // null = işaretlenmemiş, true = VAR, false = YOK. Üç durumun ayrı durması
+  // şart: "sorulmadı" ile "yok" aynı şey değil, sigorta ihtilafında fark eder.
+  immobilizer Boolean?
+  airbag      Boolean?
+  abs         Boolean?
+  klima       Boolean?
+  stepne      Boolean?
+  kriko       Boolean?
+  cdCalar     Boolean?
+  lpg         Boolean?
+  sunroof     Boolean?
+
+  // --- matbu formun alt bloğu: işçilik kırılımı ---
+  // Kâğıtta 10 sabit satır var. Kalem tablosundan bağımsız tutuluyor:
+  // eksper parça listesini ayrı, işçilik tahminini ayrı yazıyor.
+  kaportaIscilik   Decimal @default(0) @db.Decimal(18, 2)
+  boyaIscilik      Decimal @default(0) @db.Decimal(18, 2)
+  dosemeIscilik    Decimal @default(0) @db.Decimal(18, 2)
+  mekanikIscilik   Decimal @default(0) @db.Decimal(18, 2)
+  hariciIscilik    Decimal @default(0) @db.Decimal(18, 2)
+  elektrikIscilik  Decimal @default(0) @db.Decimal(18, 2)
+  camciIscilik     Decimal @default(0) @db.Decimal(18, 2)
+  saseIscilik      Decimal @default(0) @db.Decimal(18, 2)
+  rotBalansIscilik Decimal @default(0) @db.Decimal(18, 2)
+  klimaGaziIscilik Decimal @default(0) @db.Decimal(18, 2)
+
+  /// İşçilik satırlarına uygulanacak KDV oranı (parça kalemleri kendi
+  /// oranını taşır).
+  iscilikKdvOrani Decimal @default(20) @db.Decimal(6, 2)
+  kdvDahilGirilir Boolean @default(false)
+
+  // --- toplamlar (kalemler + işçilik bloğundan hesaplanır) ---
+  parcaToplam   Decimal @default(0) @db.Decimal(18, 2)
+  iscilikToplam Decimal @default(0) @db.Decimal(18, 2)
+  araToplam     Decimal @default(0) @db.Decimal(18, 2)
+  kdvToplam     Decimal @default(0) @db.Decimal(18, 2)
+  genelToplam   Decimal @default(0) @db.Decimal(18, 2)
+
+  /// Boya/değişen şemasının tipi — araç kartındaki kasa tipinden ön değer
+  /// gelir, kullanıcı değiştirebilir.
+  semaTuru EkspertizSema @default(BINEK)
+
+  notlar String?
+
+  /// Dönüştürüldüğü kabul kartı. Dolduğunda kart KABULE_DONDU olur ve
+  /// bir daha dönüştürülemez (aynı iş iki kez iş emrine girmesin).
+  kabulId Int?
+  kabul   Kabul? @relation(fields: [kabulId], references: [id])
+
+  olusturmaTarihi  DateTime  @default(now())
+  guncellemeTarihi DateTime  @updatedAt
+  olusturanId      Int?
+  guncelleyenId    Int?
+  silindi          Boolean   @default(false)
+  silmeTarihi      DateTime?
+
+  kalemler EkspertizKalem[]
+  paneller EkspertizPanel[]
+
+  @@index([durum, silindi])
+  @@index([baslangicTarihi])
+  @@index([aracId])
+  @@index([cariId])
+  @@index([dosyaNo])
+  @@map("ekspertizler")
+}
+
+/// Matbu formdaki parça tablosunun satırı (ADET / PARÇA İSMİ / MİKTAR /
+/// BİRİM FİYAT / TUTAR). `TeklifKalem` ile birebir aynı yapı.
+model EkspertizKalem {
+  id          Int       @id @default(autoincrement())
+  ekspertizId Int
+  ekspertiz   Ekspertiz @relation(fields: [ekspertizId], references: [id], onDelete: Cascade)
+
+  sira     Int    @default(0)
+  stokId   Int?
+  stok     Stok?  @relation(fields: [stokId], references: [id])
+  aciklama String
+
+  miktar     Decimal @default(1) @db.Decimal(18, 3)
+  birim      String  @default("ADET")
+  birimFiyat Decimal @default(0) @db.Decimal(18, 4)
+  kdvOrani   Decimal @default(20) @db.Decimal(6, 2)
+  tutar      Decimal @default(0) @db.Decimal(18, 2)
+  kdvTutar   Decimal @default(0) @db.Decimal(18, 2)
+  toplam     Decimal @default(0) @db.Decimal(18, 2)
+
+  @@index([ekspertizId])
+  @@map("ekspertiz_kalemleri")
+}
+
+/// Şemada işaretlenen panel. Panel kodları kodda sabit listede tutuluyor
+/// (`src/config/arac-panel.ts`) — tabloya taşınmadı, çünkü liste çizimle
+/// (SVG) birlikte değişir; ikisi ayrı yerde durursa kaçınılmaz olarak
+/// birbirinden kopar.
+model EkspertizPanel {
+  id          Int       @id @default(autoincrement())
+  ekspertizId Int
+  ekspertiz   Ekspertiz @relation(fields: [ekspertizId], references: [id], onDelete: Cascade)
+
+  panelKodu String // örn "sol_on_kapi"
+  durum     PanelDurum
+  not       String?
+
+  @@unique([ekspertizId, panelKodu])
+  @@map("ekspertiz_panelleri")
+}

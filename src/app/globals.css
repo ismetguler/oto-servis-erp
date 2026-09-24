@@ -1,0 +1,500 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* ==========================================================================
+   UĞUR OTO — GÖRSEL KİMLİK
+
+   Hedef: Türk ERP kullanıcısının alışkın olduğu YOĞUN, ızgaralı, klavyeyle
+   hızlı çalışılan arayüz. Bol boşluklu "vitrin" tasarımı değil.
+
+   - Renk: koyu petrol mavisi (otomotiv/atölye) + uyarı amberi
+   - Köşe yarıçapı küçük (4-6px) — kurumsal, oyuncak gibi durmasın
+   - Tablo satırları 32px, kenarlıklar görünür — Excel'e alışkın göz arasın
+   - Rakamlar tabular (sütunlar hizalı dursun)
+   ========================================================================== */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+
+  /* durum renkleri — rozet, uyarı, kart şeritleri */
+  --color-basari: var(--basari);
+  --color-basari-yumusak: var(--basari-yumusak);
+  --color-uyari: var(--uyari);
+  --color-uyari-yumusak: var(--uyari-yumusak);
+  --color-tehlike: var(--tehlike);
+  --color-tehlike-yumusak: var(--tehlike-yumusak);
+  --color-bilgi: var(--bilgi);
+  --color-bilgi-yumusak: var(--bilgi-yumusak);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --radius: 0.375rem;
+
+  /* zemin: kağıt beyazı değil, hafif soğuk gri — panellerin beyazı öne çıksın */
+  --background: oklch(0.964 0.004 247);
+  --foreground: oklch(0.24 0.02 250);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.02 250);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.02 250);
+
+  /* ana renk: koyu petrol mavisi */
+  --primary: oklch(0.4 0.075 236);
+  --primary-foreground: oklch(0.99 0.002 240);
+
+  --secondary: oklch(0.945 0.006 247);
+  --secondary-foreground: oklch(0.32 0.03 245);
+
+  --muted: oklch(0.955 0.005 247);
+  --muted-foreground: oklch(0.52 0.018 250);
+
+  /* vurgu: atölye amberi — sadece dikkat çekmesi gereken yerde */
+  --accent: oklch(0.945 0.03 80);
+  --accent-foreground: oklch(0.38 0.09 62);
+
+  --destructive: oklch(0.55 0.2 27);
+  --border: oklch(0.898 0.006 247);
+  --input: oklch(0.878 0.008 247);
+  --ring: oklch(0.55 0.09 236);
+
+  --basari: oklch(0.52 0.13 152);
+  --basari-yumusak: oklch(0.945 0.04 152);
+  --uyari: oklch(0.62 0.15 62);
+  --uyari-yumusak: oklch(0.955 0.05 78);
+  --tehlike: oklch(0.55 0.2 27);
+  --tehlike-yumusak: oklch(0.955 0.03 27);
+  --bilgi: oklch(0.52 0.11 245);
+  --bilgi-yumusak: oklch(0.95 0.03 245);
+
+  --chart-1: oklch(0.45 0.09 236);
+  --chart-2: oklch(0.62 0.15 62);
+  --chart-3: oklch(0.52 0.13 152);
+  --chart-4: oklch(0.55 0.2 27);
+  --chart-5: oklch(0.52 0.11 292);
+
+  /* sol menü: koyu lacivert — içerik alanından net ayrılsın */
+  --sidebar: oklch(0.26 0.032 248);
+  --sidebar-foreground: oklch(0.86 0.012 247);
+  --sidebar-primary: oklch(0.66 0.14 62);
+  --sidebar-primary-foreground: oklch(0.18 0.03 250);
+  --sidebar-accent: oklch(0.32 0.036 248);
+  --sidebar-accent-foreground: oklch(0.97 0.005 247);
+  --sidebar-border: oklch(0.33 0.03 248);
+  --sidebar-ring: oklch(0.6 0.1 236);
+}
+
+.dark {
+  --background: oklch(0.19 0.018 250);
+  --foreground: oklch(0.93 0.006 247);
+
+  --card: oklch(0.235 0.022 250);
+  --card-foreground: oklch(0.93 0.006 247);
+  --popover: oklch(0.235 0.022 250);
+  --popover-foreground: oklch(0.93 0.006 247);
+
+  --primary: oklch(0.66 0.11 236);
+  --primary-foreground: oklch(0.16 0.02 250);
+
+  --secondary: oklch(0.29 0.024 250);
+  --secondary-foreground: oklch(0.93 0.006 247);
+
+  --muted: oklch(0.28 0.022 250);
+  --muted-foreground: oklch(0.68 0.014 247);
+
+  --accent: oklch(0.33 0.045 70);
+  --accent-foreground: oklch(0.88 0.08 78);
+
+  --destructive: oklch(0.62 0.18 25);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.6 0.1 236);
+
+  --basari: oklch(0.68 0.14 152);
+  --basari-yumusak: oklch(0.3 0.05 152);
+  --uyari: oklch(0.75 0.14 70);
+  --uyari-yumusak: oklch(0.32 0.05 70);
+  --tehlike: oklch(0.66 0.17 25);
+  --tehlike-yumusak: oklch(0.31 0.06 25);
+  --bilgi: oklch(0.68 0.11 245);
+  --bilgi-yumusak: oklch(0.3 0.05 245);
+
+  --chart-1: oklch(0.62 0.11 236);
+  --chart-2: oklch(0.72 0.14 62);
+  --chart-3: oklch(0.66 0.13 152);
+  --chart-4: oklch(0.64 0.18 25);
+  --chart-5: oklch(0.64 0.12 292);
+
+  --sidebar: oklch(0.215 0.024 250);
+  --sidebar-foreground: oklch(0.86 0.012 247);
+  --sidebar-primary: oklch(0.7 0.13 62);
+  --sidebar-primary-foreground: oklch(0.17 0.03 250);
+  --sidebar-accent: oklch(0.29 0.028 250);
+  --sidebar-accent-foreground: oklch(0.96 0.005 247);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.6 0.1 236);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply font-sans;
+    /* ERP yoğunluğu: 16px yerine 15px taban — ekrana daha çok satır sığar */
+    font-size: 15px;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv05", "ss01";
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Rakamlar her yerde hizalı: tutar sütunları kaymasın */
+  table,
+  input[type="number"],
+  .rakam {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Otomatik doldurmada tarayıcının sarı zeminini bastır */
+  input:-webkit-autofill,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--foreground);
+    box-shadow: 0 0 0 1000px var(--card) inset;
+  }
+
+  /* İnce, dikkat dağıtmayan kaydırma çubuğu */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklch, var(--muted-foreground) 40%, transparent)
+      transparent;
+  }
+}
+
+/* Üst ilerleme çubuğu — sayfa geçişinde tıklama anında görsel tepki.
+   Şerit soldan sağa dolar, %92'de durur; navigasyon bitince bileşen
+   çubuğu söker. Bkz. components/kabuk/ust-ilerleme-cubugu.tsx */
+@keyframes gezinme-ilerleme {
+  0% {
+    width: 0%;
+    opacity: 1;
+  }
+  60% {
+    width: 68%;
+    opacity: 1;
+  }
+  100% {
+    width: 92%;
+    opacity: 1;
+  }
+}
+
+@layer components {
+  /* Sayfa üstündeki başlık şeridi */
+  .sayfa-basligi {
+    @apply flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-3;
+  }
+
+  /* Başlıktaki düğme şeridi dar ekranda alt satıra insin, taşmasın.
+     `flex-wrap` flex olmayan çocuklarda zararsız. */
+  .sayfa-basligi > * {
+    @apply min-w-0 max-w-full flex-wrap;
+  }
+
+  /* Beyaz içerik paneli — ERP'nin temel kutusu */
+  .panel {
+    @apply rounded-md border border-border bg-card text-card-foreground shadow-[0_1px_2px_0_rgb(15_28_45_/_0.04)];
+  }
+
+  .panel-baslik {
+    @apply flex items-center justify-between gap-2 border-b border-border px-3.5 py-2.5;
+  }
+
+  .panel-baslik-yazi {
+    @apply text-[0.8125rem] font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+
+  /* Tablo sarmalayıcı: dar ekranda SAYFA değil, sadece tablo yatay kaysın.
+     ERP tabloları 10+ sütunlu; telefonda daraltmak yerine kaydırtıyoruz.
+     `overscroll-x-contain` sayfanın geri gitmesini engeller. */
+  .tablo-sarmal {
+    @apply w-full max-w-full overflow-x-auto overscroll-x-contain;
+  }
+
+  /* Veri tablosu: sıkışık satır, görünür ızgara, yapışkan başlık */
+  .veri-tablosu {
+    @apply w-full min-w-max border-collapse text-[0.8125rem];
+  }
+
+  .veri-tablosu thead th {
+    @apply sticky top-0 z-10 whitespace-nowrap border-b border-border bg-secondary px-3 py-2 text-left font-semibold text-secondary-foreground;
+  }
+
+  .veri-tablosu tbody td {
+    @apply border-b border-border/70 px-3 py-1.5 align-middle;
+  }
+
+  .veri-tablosu tbody tr:hover {
+    @apply bg-accent/40;
+  }
+
+  /* Form ızgarası: etiket üstte, alanlar sıkışık */
+  .form-alani {
+    @apply flex flex-col gap-1;
+  }
+
+  .form-etiket {
+    @apply text-[0.75rem] font-medium text-muted-foreground;
+  }
+}
+
+/* ==========================================================================
+   DOKUNMA (mobil)
+   Servis danışmanı aracın başında telefonla kullanıyor: parmakla basılan
+   her hedef en az 40px olsun. Girdilerin yazı boyutu zaten 16px (text-base)
+   — iOS 16px altındaki alanlara odaklanınca sayfayı zumluyor.
+   Yalnızca md altında geçerli; masaüstündeki sıkışık ERP düzeni bozulmaz.
+   ========================================================================== */
+@media (max-width: 767.98px) {
+  /* DİKKAT: kök yazı boyutu 15px olduğu için `2.5rem` gerçekte 37.5px
+     ediyordu — hedeflenen 40px'e hiç ulaşmıyordu. Dokunma ölçüsü yazı
+     boyutuna bağlı olmasın diye piksel cinsinden veriliyor (44px = Apple
+     HIG / Android tavsiyesi). */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  button,
+  [role="button"],
+  a[data-slot="button"] {
+    min-height: 44px;
+  }
+
+  /* Tablo satırındaki bağlantılar (plaka, cari kodu, kabul no) parmakla
+     ıskalanıyordu: hücre dolgusu satırı ~30px'te tutuyordu. Mobilde satır
+     ~44px'e çıkıyor; masaüstündeki sıkışık ERP tablosu aynen kalıyor. */
+  .veri-tablosu tbody td {
+    padding-top: 0.8rem;
+    padding-bottom: 0.8rem;
+  }
+
+  /* Hücre içindeki bağlantının kendi kutusu yazı kadar (15px) — satır 44px
+     olsa bile parmak metnin tam üstüne gelmek zorundaydı. Satır içi (inline)
+     bir öğede dikey dolgu SATIR YÜKSEKLİĞİNİ DEĞİŞTİRMEZ ama dokunma
+     alanını büyütür; değer satırı taşırıp komşu satırın tıklamasını
+     çalmayacak şekilde (0.85rem) seçildi. */
+  .veri-tablosu tbody td a {
+    padding-block: 0.95rem;
+  }
+
+  /* Filtre çubuklarındaki alanlar telefonda yan yana sıkışmasın:
+     her biri kendi satırını kaplasın. Izgara içindeki formlarda
+     `flex-basis` yok sayıldığı için oralara dokunmaz. */
+  .form-alani {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .form-alani > input,
+  .form-alani > select,
+  .form-alani > .relative {
+    width: 100%;
+  }
+
+  /* Formların altındaki yapışkan "Kaydet / Vazgeç" şeridi (12 formda ortak).
+     Çentikli telefonlarda alt gösterge çubuğu düğmelerin üstüne biniyordu;
+     dolgu safe-area kadar büyütülüyor. Masaüstündeki py-2.5 / py-3 farkları
+     olduğu gibi kalsın diye burada YALNIZCA alt dolgu ezililiyor. */
+  .form-aksiyon-cubugu {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  }
+
+  /* Sayfa başlığındaki düğme şeridi 360px'de taşmasın. */
+  .sayfa-basligi {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+}
+
+@utility zorunlu-alan {
+  &::after {
+    content: " *";
+    color: var(--destructive);
+  }
+}
+
+/* ==========================================================================
+   YAZDIRMA
+   Selpar'daki her listede/raporda yazdır düğmesi var; muhasebeci dökümü
+   kâğıda alıp dosyalıyor. Ekran düzeni olduğu gibi yazıcıya gitmemeli:
+   menü, filtre ve düğmeler kâğıt israfı. `yazdirma-disi` işaretli her şey
+   çıktıda gizlenir, tablo ise sayfa sonunda ortadan bölünmez.
+   ========================================================================== */
+/* Yalnız kâğıtta görünen bloklar (firma başlığı, seçilen dönem satırı).
+   Ekranda yer kaplamaz; `@media print` içinde açılır. */
+.yazdirma-sadece {
+  display: none;
+}
+
+@media print {
+  .yazdirma-sadece {
+    display: block !important;
+  }
+
+  .yazdirma-disi,
+  aside,
+  header {
+    display: none !important;
+  }
+
+  /* Ekranda kaydırılan HER sarmal kâğıtta tümüyle açılmalı. Sayfalar
+     tabloyu kimi yerde `yazdirma-alani`, kimi yerde düz `panel
+     overflow-auto` / `tablo-sarmal` içine koyuyor; hepsi tek kuralla
+     açılıyor ki çıktıda ne satır ne de sütun kırpılsın (İsmet: "sağa
+     kaydırma çıkmasın, tam ekranda neyse o yazdırılsın"). */
+  .yazdirma-alani,
+  .yazdirma-alani *,
+  .tablo-sarmal,
+  .panel,
+  [class*="overflow-"] {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* `.veri-tablosu` ekranda `min-width: max-content` ile en geniş hâlinde
+     durur ve başlıklar `nowrap`tır — kâğıtta bu, sayfadan taşıp kırpılmak
+     demek. Çıktıda tablo kâğıt genişliğine sığar: sütunlar daralır, uzun
+     metin alt satıra iner, yatay kaydırma tamamen kalkar. */
+  .veri-tablosu {
+    min-width: 0 !important;
+    width: 100% !important;
+    table-layout: auto;
+    font-size: 8pt !important;
+  }
+
+  .veri-tablosu thead th,
+  .veri-tablosu tbody td,
+  .veri-tablosu tfoot td {
+    white-space: normal !important;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    padding: 2pt 3pt !important;
+    max-width: none !important;
+  }
+
+  /* Ekranda kimi hücrede `truncate` (tek satır + üç nokta) var; kâğıtta
+     tam metin görünmeli. */
+  .veri-tablosu .truncate {
+    overflow: visible !important;
+    white-space: normal !important;
+    text-overflow: clip !important;
+  }
+
+  body {
+    background: #fff;
+    font-size: 10pt;
+  }
+
+  .panel {
+    border: none;
+    box-shadow: none;
+  }
+
+  .veri-tablosu thead th {
+    position: static;
+    background: #eee !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Satır ve başlık kâğıt sonunda ikiye bölünmesin */
+  .veri-tablosu tr,
+  .panel {
+    break-inside: avoid;
+  }
+
+  .veri-tablosu thead {
+    display: table-header-group; /* çok sayfalı dökümde başlık her sayfada */
+  }
+
+  /* --------------------------------------------------------------------
+     BASKI ŞABLONLARI ((baski) route grubu — `BaskiSayfasi` sarmalı)
+     `.veri-tablosu` sınıfını KULLANMIYORLAR; çok kalemli fatura/döküm
+     ikinci sayfaya taştığında sütun başlıkları tekrarlanmalı ve satır/
+     toplam kutusu/imza bloğu kâğıt sonunda ikiye bölünmemeli.
+     -------------------------------------------------------------------- */
+  .baski-belge table thead {
+    display: table-header-group; /* her sayfada sütun başlıkları */
+  }
+
+  .baski-belge table thead tr,
+  .baski-belge table tbody tr {
+    break-inside: avoid; /* satır kâğıt sonunda bölünmesin */
+  }
+
+  .baski-belge .baski-toplam,
+  .baski-belge .baski-imza {
+    break-inside: avoid; /* toplam kutusu / imza bloğu bütün kalsın */
+  }
+
+  @page {
+    margin: 12mm;
+  }
+
+  /* Sayfa numarası — Selpar her PDF'in altına "Sayfa 1 / 1" basıyor.
+     Ekranda gizli (`hidden print:inline`), çıktıda CSS sayaçlarıyla dolar. */
+  .baski-sayfa-no::after {
+    content: "Sayfa " counter(page) " / " counter(pages);
+  }
+}
